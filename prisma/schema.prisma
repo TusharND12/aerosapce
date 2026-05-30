@@ -1,0 +1,637 @@
+// Prisma Schema for LANDGRID
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  VERIFICATION_OFFICER
+  LEGAL_REVIEWER
+  DATA_ANALYST
+  SUPPORT_SPECIALIST
+  BROKER
+  BUYER
+  SELLER
+  INVESTOR
+  OBSERVER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum ParcelStatus {
+  ACTIVE
+  UNDER_NEGOTIATION
+  SOLD
+  DELISTED
+  PENDING
+}
+
+enum VerificationStatus {
+  PENDING
+  IN_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum OfferStatus {
+  SUBMITTED
+  COUNTERED
+  REVISED
+  LEGAL_REVIEW
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+  EXPIRED
+  CLOSED
+}
+
+enum ReadinessStatus {
+  READY
+  CAUTION
+  REQUIRES_REVIEW
+}
+
+enum NotificationType {
+  OFFER_RECEIVED
+  OFFER_COUNTERED
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  PARCEL_MATCH
+  PARCEL_VERIFIED
+  PARCEL_PRICE_DROP
+  DOCUMENT_UPLOADED
+  DOCUMENT_VERIFIED
+  SYSTEM_ANNOUNCEMENT
+  SECURITY_ALERT
+}
+
+enum AuditAction {
+  // Authentication
+  USER_LOGIN
+  USER_LOGOUT
+  LOGIN_FAILED
+
+  // Parcels
+  PARCEL_CREATED
+  PARCEL_UPDATED
+  PARCEL_DELETED
+  PARCEL_VIEWED
+  PARCEL_VERIFIED
+
+  // Offers
+  OFFER_CREATED
+  OFFER_COUNTERED
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  OFFER_WITHDRAWN
+
+  // Documents
+  DOCUMENT_UPLOADED
+  DOCUMENT_DOWNLOADED
+  DOCUMENT_DELETED
+  DOCUMENT_VERIFIED
+
+  // User Management
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  USER_ROLE_CHANGED
+  PERMISSION_CHANGED
+
+  // Settings
+  SETTINGS_UPDATED
+}
+
+// ============================================
+// CORE MODELS
+// ============================================
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  passwordHash    String?   @map("password_hash")
+  name            String
+  phone           String?   @db.VarChar(20)
+  avatarUrl       String?   @map("avatar_url")
+  role            Role      @default(BUYER)
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  lastLoginAt     DateTime? @map("last_login_at")
+
+  // Organization
+  organizationId String?   @map("organization_id")
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+
+  // Relations
+  parcelsOwned        Parcel[] @relation("ParcelOwner")
+  parcelsVerified     Parcel[] @relation("ParcelVerifier")
+  offersMade          Offer[] @relation("OfferBuyer")
+  offersBrokered     Offer[] @relation("OfferBroker")
+  documents          Document[]
+  savedSearches       SavedSearch[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  verificationRecords VerificationRecord[]
+  negotiationEvents  NegotiationEvent[]
+  leads               Lead[]
+  activities          Activity[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  type        String?  // INVESTOR, BROKER, DEVELOPER, etc.
+  pan         String? @unique
+  gst         String? @map("gst")
+  address     String?
+
+  // Relations
+  members     OrganizationMember[]
+  parcels     Parcel[]
+  users       User[]
+  leads       Lead[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  userId         String   @map("user_id")
+  organizationId String   @map("organization_id")
+  role           OrgRole  @default(MEMBER)
+  invitedBy      String?  @map("invited_by")
+  joinedAt       DateTime @default(now()) @map("joined_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, organizationId])
+  @@map("organization_members")
+}
+
+// ============================================
+// PARCEL MODELS
+// ============================================
+
+model Parcel {
+  id              String @id @default(uuid())
+  displayId       String @unique @map("display_id")
+
+  // Location
+  state           String
+  district        String
+  tehsil          String?
+  village         String?
+  surveyNumber    String? @map("survey_number")
+  plotNumber      String? @map("plot_number")
+  khataNumber     String? @map("khata_number")
+  boundaryJson    Json?   @map("boundary_json")
+  address         String?
+
+  // Geographic data
+  latitude        Float?  @map("latitude")
+  longitude       Float?  @map("longitude")
+
+  // Physical attributes
+  areaSqFt        Decimal? @map("area_sq_ft") @db.Decimal(15,2)
+  areaSqM         Decimal? @map("area_sq_m") @db.Decimal(15,2)
+  areaAcres       Decimal? @map("area_acres") @db.Decimal(10,4)
+  areaHectares    Decimal? @map("area_hectares") @db.Decimal(10,4)
+  zoning          String?
+  usageType       String? @map("usage_type")
+  topography      String?
+  roadAccess      String? @map("road_access")
+
+  // Pricing
+  marketValue     Decimal? @map("market_value") @db.Decimal(15,2)
+  askingPrice     Decimal? @map("asking_price") @db.Decimal(15,2)
+  pricePerSqFt    Decimal? @map("price_per_sq_ft") @db.Decimal(10,2)
+
+  // Ownership
+  ownershipType   String? @map("ownership_type")
+  currentOwnerId   String? @map("current_owner_id")
+  currentOwner     User?   @relation("ParcelOwner", fields: [currentOwnerId], references: [id])
+
+  // Verification & Scores
+  landHealthScore     Int?  @map("land_health_score")
+  acquisitionReadiness ReadinessStatus? @map("acquisition_readiness")
+  verificationStatus   VerificationStatus @default(PENDING) @map("verification_status")
+  verifiedAt          DateTime? @map("verified_at")
+  verifiedById        String? @map("verified_by")
+  verifiedBy          User?   @relation("ParcelVerifier", fields: [verifiedById], references: [id])
+
+  // Status
+  status          ParcelStatus @default(ACTIVE)
+  listedAt        DateTime? @map("listed_at")
+  closedAt        DateTime? @map("closed_at")
+
+  // Organization
+  organizationId  String? @map("organization_id")
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+
+  // Relations
+  ownershipRecords     OwnershipRecord[]
+  encumbrances         Encumbrance[]
+  offers               Offer[]
+  documents            Document[]
+  timelineEvents       TimelineEvent[]
+  verificationRecords  VerificationRecord[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([state, district])
+  @@index([surveyNumber])
+  @@index([verificationStatus])
+  @@index([status])
+  @@index([landHealthScore])
+  @@map("parcels")
+}
+
+model OwnershipRecord {
+  id                  String   @id @default(uuid())
+  parcelId            String   @map("parcel_id")
+  parcel              Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+
+  ownerName           String   @map("owner_name")
+  ownerType           String?  @map("owner_type") // INDIVIDUAL, COMPANY, TRUST, etc.
+  ownershipPercentage Decimal? @map("ownership_percentage") @db.Decimal(5,2)
+
+  // Document reference
+  acquisitionDate     DateTime? @map("acquisition_date")
+  deedNumber          String? @map("deed_number")
+  registryDate        DateTime? @map("registry_date")
+  registryOffice      String? @map("registry_office")
+
+  // Additional details
+  fatherName          String? @map("father_name")
+  sharePercentage     Decimal? @map("share_percentage") @db.Decimal(5,2)
+  isCurrent           Boolean  @default(false) @map("is_current")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([parcelId])
+  @@map("ownership_records")
+}
+
+model Encumbrance {
+  id          String   @id @default(uuid())
+  parcelId    String   @map("parcel_id")
+  parcel      Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+
+  type        String   // MORTGAGE, LIEN, EASEMENT, LEASE, etc.
+  description String?
+  amount      Decimal? @db.Decimal(15,2)
+  holderName  String?  @map("holder_name")
+  startDate   DateTime? @map("start_date")
+  endDate     DateTime? @map("end_date")
+  status      String   @default("ACTIVE") // ACTIVE, RELEASED, DISPUTED
+  documentRef String?  @map("document_ref")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([parcelId])
+  @@map("encumbrances")
+}
+
+model VerificationRecord {
+  id          String   @id @default(uuid())
+  parcelId    String   @map("parcel_id")
+  parcel      Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+
+  source      String   // B_KINDLE, MAHABHULEKH, TN_REG, INTERNAL, etc.
+  sourceId    String?  @map("source_id")
+  recordType  String?  @map("record_type") // LAND_RECORD, OWNERSHIP, ENCUMBRANCE, etc.
+  data        Json?
+
+  verifiedAt  DateTime? @map("verified_at")
+  verifiedById String?  @map("verified_by")
+  verifiedBy  User?     @relation(fields: [verifiedById], references: [id])
+  status      String   @default("PENDING") // PENDING, VERIFIED, FAILED, EXPIRED
+  notes       String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([parcelId])
+  @@index([source])
+  @@map("verification_records")
+}
+
+// ============================================
+// OFFER & NEGOTIATION
+// ============================================
+
+model Offer {
+  id          String   @id @default(uuid())
+  parcelId    String   @map("parcel_id")
+  parcel      Parcel   @relation(fields: [parcelId], references: [id])
+
+  buyerId     String   @map("buyer_id")
+  buyer       User     @relation("OfferBuyer", fields: [buyerId], references: [id])
+
+  brokerId    String?  @map("broker_id")
+  broker      User?    @relation("OfferBroker", fields: [brokerId], references: [id])
+
+  amount      Decimal  @db.Decimal(15,2)
+  terms       Json?    // { payment_schedule, conditions, contingencies }
+  status      OfferStatus @default(SUBMITTED)
+  validUntil  DateTime? @map("valid_until")
+
+  // Negotiation tracking
+  currentAmount Decimal? @map("current_amount") @db.Decimal(15,2)
+
+  negotiationEvents NegotiationEvent[]
+  documents        Document[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([parcelId])
+  @@index([buyerId])
+  @@index([status])
+  @@map("offers")
+}
+
+model NegotiationEvent {
+  id          String   @id @default(uuid())
+  offerId     String   @map("offer_id")
+  offer       Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  type        String   // SUBMITTED, COUNTERED, REVISED, LEGAL_REVIEW, ACCEPTED, DECLINED, WITHDRAWN
+  fromStatus  String?  @map("from_status")
+  toStatus    String?  @map("to_status")
+  amount      Decimal? @db.Decimal(15,2)
+  terms       Json?
+  notes       String?
+
+  createdById String?  @map("created_by")
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([offerId])
+  @@map("negotiation_events")
+}
+
+// ============================================
+// DOCUMENTS
+// ============================================
+
+model Document {
+  id          String   @id @default(uuid())
+  parcelId    String?  @map("parcel_id")
+  parcel      Parcel?  @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+
+  offerId     String?  @map("offer_id")
+  offer       Offer?   @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  userId      String?  @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id])
+
+  name        String
+  type        String?  // SALE_DEED, MAP, SURVEY, TAX, etc.
+  category    String?  // LEGAL, FINANCIAL, MAP, SURVEY, VERIFICATION
+  description String?
+
+  fileUrl     String   @map("file_url")
+  fileSize    Int?     @map("file_size")
+  mimeType    String?  @map("mime_type")
+  s3Key       String?  @map("s3_key")
+
+  status      String   @default("UPLOADED") // UPLOADED, VERIFIED, REJECTED, EXPIRED
+  verifiedAt  DateTime? @map("verified_at")
+  verifiedById String? @map("verified_by")
+
+  // Data room access
+  dataRoomAccess Boolean @default(false) @map("data_room_access")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([parcelId])
+  @@index([offerId])
+  @@index([userId])
+  @@index([category])
+  @@map("documents")
+}
+
+// ============================================
+// TIMELINE & ACTIVITY
+// ============================================
+
+model TimelineEvent {
+  id          String   @id @default(uuid())
+  parcelId    String   @map("parcel_id")
+  parcel      Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+
+  type        String   // PURCHASE, MUTATION, TAX_UPDATE, VERIFICATION, LISTING, OFFER, CLOSURE
+  title       String
+  description String?
+  metadata    Json?
+
+  createdById String?  @map("created_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([parcelId])
+  @@index([type])
+  @@map("timeline_events")
+}
+
+model SavedSearch {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String?
+  filters   Json
+  notify    Boolean  @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("saved_searches")
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      NotificationType
+  title     String
+  message   String?
+  data      Json?    // { parcelId, offerId, etc. }
+  readAt    DateTime? @map("read_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([type])
+  @@map("notifications")
+}
+
+// ============================================
+// AUDIT & SECURITY
+// ============================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?  @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action      AuditAction
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id")
+  oldValues   Json?    @map("old_values")
+  newValues   Json?    @map("new_values")
+
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// CRM
+// ============================================
+
+model Lead {
+  id            String   @id @default(uuid())
+
+  // Contact info
+  email         String
+  name          String
+  phone         String?
+
+  // Organization
+  organizationId String? @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  // Assignment
+  type          String   // BUYER, SELLER, BROKER, INVESTOR
+  status        String   @default("NEW") // NEW, CONTACTED, QUALIFIED, MEETING, PROPOSAL, NEGOTIATION, CLOSED_WON, CLOSED_LOST
+  source        String?  // WEBSITE, REFERRAL, CAMPAIGN, etc.
+  assignedToId  String?  @map("assigned_to")
+  assignedTo    User?    @relation(fields: [assignedToId], references: [id])
+
+  notes         Json?    // Array of note objects
+  metadata      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  activities    Activity[]
+
+  @@index([status])
+  @@index([type])
+  @@index([assignedToId])
+  @@map("leads")
+}
+
+model Activity {
+  id          String   @id @default(uuid())
+  leadId      String   @map("lead_id")
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  type        String   // CALL, EMAIL, MEETING, NOTE, OFFER, DOCUMENT
+  description String
+  metadata    Json?
+
+  createdById String   @map("created_by")
+  createdBy   User     @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([leadId])
+  @@map("activities")
+}
+
+// ============================================
+// SESSIONS & TOKENS
+// ============================================
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String   @id
+  token      String   @unique
+  expires    DateTime
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("verification_tokens")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?    @map("expires_at")
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([provider, provider_account_id])
+  @@map("accounts")
+}
